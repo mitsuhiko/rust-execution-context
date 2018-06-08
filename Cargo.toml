@@ -1,7 +1,11 @@
 [package]
 name = "execution-context"
 version = "0.1.0"
+license = "Apache-2.0"
+description = "An experimental .NET inspired execution context"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
+keywords = ["executioncontext", "flow", "logicalcallcontext", "callcontext"]
+readme = "README.md"
 
 [dependencies]
 im = "10.2.0"
