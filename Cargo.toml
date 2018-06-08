@@ -1,0 +1,8 @@
+[package]
+name = "execution-context"
+version = "0.1.0"
+authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
+
+[dependencies]
+im = "10.2.0"
+lazy_static = "1.0.1"
