@@ -6,6 +6,7 @@ description = "An experimental .NET inspired execution context"
 authors = ["Armin Ronacher <armin.ronacher@active-4.com>"]
 keywords = ["executioncontext", "flow", "logicalcallcontext", "callcontext"]
 readme = "README.md"
+repository = "https://github.com/mitsuhiko/rust-execution-context"
 
 [dependencies]
 im = "10.2.0"
