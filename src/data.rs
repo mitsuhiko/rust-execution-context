@@ -3,8 +3,8 @@ use std::any::TypeId;
 use std::fmt;
 use std::hash::{BuildHasherDefault, Hasher};
 use std::mem;
-use std::sync::Arc;
 use std::ops::Deref;
+use std::sync::Arc;
 
 use ctx::ExecutionContext;
 

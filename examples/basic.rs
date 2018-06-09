@@ -19,7 +19,8 @@ fn main() {
             LOCALE.set("fr_FR".into());
             println!("the new locale in the child thread is {}", LOCALE.get());
         });
-    }).join().unwrap();
+    }).join()
+        .unwrap();
 
     println!("the locale of the parent thread is again {}", LOCALE.get());
 }

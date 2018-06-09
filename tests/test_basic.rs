@@ -30,7 +30,8 @@ fn test_basic_propagation_to_threads() {
             assert_eq!(*TEST.get(), 42);
             TEST.set(22);
         });
-    }).join().unwrap();
+    }).join()
+        .unwrap();
 
     assert_eq!(*TEST.get(), 23);
 }
@@ -73,4 +74,14 @@ fn test_flow_disabling() {
     }
 
     assert!(!ExecutionContext::is_flow_suppressed());
+}
+
+#[test]
+fn test_running_default() {
+    flow_local!(static TEST: u32 = 23);
+    TEST.set(24);
+    assert_eq!(*TEST.get(), 24);
+    ExecutionContext::default().run(|| {
+        assert_eq!(*TEST.get(), 23);
+    });
 }

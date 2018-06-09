@@ -1,5 +1,5 @@
 use std::any::TypeId;
-use std::cell::RefCell;
+use std::cell::UnsafeCell;
 use std::fmt;
 use std::panic;
 use std::rc::Rc;
@@ -8,21 +8,19 @@ use std::sync::Arc;
 use data::{LocalMap, Opaque};
 
 lazy_static! {
-    static ref DEFAULT_ACTIVE_CONTEXT: Arc<ExecutionContextImpl> =
-        Arc::new(ExecutionContextImpl {
-            flow_propagation: FlowPropagation::Active,
-            locals: Default::default(),
-        });
-    static ref DEFAULT_DISABLED_CONTEXT: Arc<ExecutionContextImpl> =
-        Arc::new(ExecutionContextImpl {
-            flow_propagation: FlowPropagation::Disabled,
-            locals: Default::default(),
-        });
+    static ref DEFAULT_ACTIVE_CONTEXT: Arc<ExecutionContextImpl> = Arc::new(ExecutionContextImpl {
+        flow_propagation: FlowPropagation::Active,
+        locals: Default::default(),
+    });
+    static ref DEFAULT_DISABLED_CONTEXT: Arc<ExecutionContextImpl> = Arc::new(ExecutionContextImpl {
+        flow_propagation: FlowPropagation::Disabled,
+        locals: Default::default(),
+    });
 }
 
 thread_local! {
-    static CURRENT_CONTEXT: RefCell<Arc<ExecutionContextImpl>> =
-        RefCell::new(DEFAULT_ACTIVE_CONTEXT.clone());
+    static CURRENT_CONTEXT: UnsafeCell<Arc<ExecutionContextImpl>> =
+        UnsafeCell::new(DEFAULT_ACTIVE_CONTEXT.clone());
 }
 
 #[derive(PartialEq, Debug, Copy, Clone)]
@@ -64,7 +62,8 @@ impl ExecutionContextImpl {
 /// encapsulated context across asynchronous points such as threads or tasks.
 ///
 /// An execution context can be captured, send and cloned.  This permits a context to be
-/// carried to other threads.
+/// carried to other threads.  The default execution context can be acquired at any
+/// by calling `ExecutionContext::default`.
 #[derive(Clone)]
 pub struct ExecutionContext {
     inner: Arc<ExecutionContextImpl>,
@@ -73,6 +72,14 @@ pub struct ExecutionContext {
 impl fmt::Debug for ExecutionContext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ExecutionContext").finish()
+    }
+}
+
+impl Default for ExecutionContext {
+    fn default() -> ExecutionContext {
+        ExecutionContext {
+            inner: DEFAULT_ACTIVE_CONTEXT.clone(),
+        }
     }
 }
 
@@ -108,10 +115,10 @@ impl ExecutionContext {
     /// ```
     pub fn capture() -> ExecutionContext {
         ExecutionContext {
-            inner: CURRENT_CONTEXT.with(|ctx| {
-                let current = ctx.borrow();
-                match current.flow_propagation {
-                    FlowPropagation::Active => current.clone(),
+            inner: CURRENT_CONTEXT.with(|ctx| unsafe {
+                let current = ctx.get();
+                match (*current).flow_propagation {
+                    FlowPropagation::Active => (*current).clone(),
                     FlowPropagation::Suppressed => DEFAULT_ACTIVE_CONTEXT.clone(),
                     FlowPropagation::Disabled => DEFAULT_DISABLED_CONTEXT.clone(),
                 }
@@ -181,7 +188,7 @@ impl ExecutionContext {
     /// A caller cannot determine if the flow is just temporarily suppressed
     /// or permanently disabled.
     pub fn is_flow_suppressed() -> bool {
-        CURRENT_CONTEXT.with(|ctx| !ctx.borrow().has_active_flow())
+        CURRENT_CONTEXT.with(|ctx| unsafe { !(*ctx.get()).has_active_flow() })
     }
 
     /// Runs a function in the context of the given execution context.
@@ -206,9 +213,10 @@ impl ExecutionContext {
     pub fn run<F: FnOnce() -> R, R>(&self, f: F) -> R {
         // figure out where we want to switch to.  In case the current
         // flow is the target flow, we can get away without having to do
-        // any panic handling and pointer swapping.
-        if let Some(old_ctx) = CURRENT_CONTEXT.with(|ctx| {
-            let mut ptr = ctx.borrow_mut();
+        // any panic handling and pointer swapping.  Otherwise this block
+        // switches us to the new context and returns the old one.
+        let did_switch = CURRENT_CONTEXT.with(|ctx| unsafe {
+            let ptr = ctx.get();
             if &**ptr as *const _ == &*self.inner as *const _ {
                 None
             } else {
@@ -216,31 +224,35 @@ impl ExecutionContext {
                 *ptr = self.inner.clone();
                 Some(old)
             }
+        });
 
-        // this is for the case where we just switched the execution
-        // context.  This means we need to catch the panic, restore the
-        // old context and resume the panic if needed.
-        }) {
-            let rv = panic::catch_unwind(panic::AssertUnwindSafe(|| f()));
-            CURRENT_CONTEXT.with(|ctx| *ctx.borrow_mut() = old_ctx);
-            match rv {
-                Err(err) => panic::resume_unwind(err),
-                Ok(rv) => rv,
+        match did_switch {
+            None => {
+                // None means no switch happened.  We can invoke the function
+                // just like that, no changes necessary.
+                f()
             }
-
-        // simple case: same flow.  We can just invoke the function
-        } else {
-            f()
+            Some(old_ctx) => {
+                // this is for the case where we just switched the execution
+                // context.  This means we need to catch the panic, restore the
+                // old context and resume the panic if needed.
+                let rv = panic::catch_unwind(panic::AssertUnwindSafe(|| f()));
+                CURRENT_CONTEXT.with(|ctx| unsafe { *ctx.get() = old_ctx });
+                match rv {
+                    Err(err) => panic::resume_unwind(err),
+                    Ok(rv) => rv,
+                }
+            }
         }
     }
 
     /// Internal helper for context modifications
     fn modify_context<F: FnOnce(&mut ExecutionContextImpl) -> R, R>(f: F) -> R {
-        CURRENT_CONTEXT.with(|ctx| {
-            let mut ptr = ctx.borrow_mut();
+        CURRENT_CONTEXT.with(|ctx| unsafe {
+            let ptr = ctx.get();
             let mut new = ExecutionContextImpl {
-                flow_propagation: ptr.flow_propagation,
-                locals: ptr.locals.clone(),
+                flow_propagation: (*ptr).flow_propagation,
+                locals: (*ptr).locals.clone(),
             };
             let rv = f(&mut new);
             *ptr = new.into_arc();
@@ -250,7 +262,8 @@ impl ExecutionContext {
 
     /// Inserts a value into the locals.
     pub(crate) fn set_local_value(key: TypeId, new_value: Arc<Box<Opaque>>) {
-        let new_locals = CURRENT_CONTEXT.with(|ctx| ctx.borrow().locals.insert(key, new_value));
+        let new_locals =
+            CURRENT_CONTEXT.with(|ctx| unsafe { (*ctx.get()).locals.insert(key, new_value) });
         ExecutionContext::modify_context(|ctx| {
             ctx.locals = new_locals;
         });
@@ -258,14 +271,16 @@ impl ExecutionContext {
 
     /// Returns a value from the locals.
     pub(crate) fn get_local_value(key: TypeId) -> Option<Arc<Box<Opaque>>> {
-        CURRENT_CONTEXT.with(|ctx| ctx.borrow().locals.get(&key))
+        CURRENT_CONTEXT.with(|ctx| unsafe { (*ctx.get()).locals.get(&key) })
     }
 }
 
 impl Drop for FlowGuard {
     fn drop(&mut self) {
         if let Some(old) = Rc::get_mut(&mut self.0) {
-            ExecutionContext::modify_context(|ctx| ctx.flow_propagation = *old);
+            ExecutionContext::modify_context(|ctx| {
+                ctx.flow_propagation = *old;
+            });
         }
     }
 }
