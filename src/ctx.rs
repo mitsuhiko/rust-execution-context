@@ -153,11 +153,9 @@ impl ExecutionContext {
     /// // the flow is resumed here
     /// ```
     pub fn suppress_flow() -> FlowGuard {
-        ExecutionContext::modify_context(|ctx| {
-            let old = ctx.flow_propagation;
-            ctx.flow_propagation = FlowPropagation::Suppressed;
-            FlowGuard(Rc::new(old))
-        })
+        FlowGuard(Rc::new(ExecutionContext::set_flow_propagation(
+            FlowPropagation::Suppressed,
+        )))
     }
 
     /// Permanently disables the flow.
@@ -166,11 +164,9 @@ impl ExecutionContext {
     /// flow this permanently disables the flow.  The flow can be manually restored
     /// by a call to `restore_flow`.
     pub fn disable_flow() -> FlowGuard {
-        ExecutionContext::modify_context(|ctx| {
-            let old = ctx.flow_propagation;
-            ctx.flow_propagation = FlowPropagation::Disabled;
-            FlowGuard(Rc::new(old))
-        })
+        FlowGuard(Rc::new(ExecutionContext::set_flow_propagation(
+            FlowPropagation::Disabled,
+        )))
     }
 
     /// Restores the flow.
@@ -181,9 +177,7 @@ impl ExecutionContext {
     /// In those situations it might be useful to call into this function to
     /// restore the flow.
     pub fn restore_flow() {
-        ExecutionContext::modify_context(|ctx| {
-            ctx.flow_propagation = FlowPropagation::Active;
-        })
+        ExecutionContext::set_flow_propagation(FlowPropagation::Active);
     }
 
     /// Checks if the flow is currently suppressed.
@@ -249,26 +243,30 @@ impl ExecutionContext {
         }
     }
 
-    /// Internal helper for context modifications
-    fn modify_context<F: FnOnce(&mut ExecutionContextImpl) -> R, R>(f: F) -> R {
+    /// Internal helper to update the flow propagation.
+    fn set_flow_propagation(new: FlowPropagation) -> FlowPropagation {
         CURRENT_CONTEXT.with(|ctx| unsafe {
             let ptr = ctx.get();
-            let mut new = ExecutionContextImpl {
-                flow_propagation: (*ptr).flow_propagation,
-                locals: (*ptr).locals.clone(),
-            };
-            let rv = f(&mut new);
-            *ptr = new.into_arc();
-            rv
+            let old = (*ptr).flow_propagation;
+            if old != new {
+                *ptr = ExecutionContextImpl {
+                    flow_propagation: new,
+                    locals: (*ptr).locals.clone(),
+                }.into_arc();
+            }
+            old
         })
     }
 
     /// Inserts a value into the locals.
     pub(crate) fn set_local_value(key: TypeId, value: Arc<Box<Opaque>>) {
-        let new_locals =
-            CURRENT_CONTEXT.with(|ctx| unsafe { (*ctx.get()).locals.insert(key, value) });
-        ExecutionContext::modify_context(|ctx| {
-            ctx.locals = new_locals;
+        CURRENT_CONTEXT.with(|ctx| unsafe {
+            let ptr = ctx.get();
+            let locals = (*ptr).locals.insert(key, value);
+            *ptr = ExecutionContextImpl {
+                flow_propagation: (*ptr).flow_propagation,
+                locals: locals,
+            }.into_arc();
         });
     }
 
@@ -281,9 +279,7 @@ impl ExecutionContext {
 impl Drop for FlowGuard {
     fn drop(&mut self) {
         if let Some(old) = Rc::get_mut(&mut self.0) {
-            ExecutionContext::modify_context(|ctx| {
-                ctx.flow_propagation = *old;
-            });
+            ExecutionContext::set_flow_propagation(*old);
         }
     }
 }

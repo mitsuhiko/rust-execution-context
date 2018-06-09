@@ -26,10 +26,7 @@ macro_rules! flow_local {
                 struct __A;
                 ::std::any::TypeId::of::<__A>()
             }
-            $crate::FlowLocal {
-                __init: __init,
-                __key: __key,
-            }
+            $crate::FlowLocal { __init, __key }
         };
     };
 }
@@ -70,7 +67,7 @@ pub struct FlowLocal<T> {
 
 impl<T> fmt::Debug for FlowLocal<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "FlowLocal")
+        f.pad("FlowLocal { .. }")
     }
 }
 
