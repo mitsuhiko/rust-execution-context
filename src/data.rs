@@ -85,9 +85,10 @@ impl Default for IdHasher {
 }
 
 impl Hasher for IdHasher {
-    fn write(&mut self, _bytes: &[u8]) {
-        // TODO: need to do something sensible
-        panic!("can only hash u64");
+    fn write(&mut self, bytes: &[u8]) {
+        for &x in bytes {
+            self.id.wrapping_add(x as u64);
+        }
     }
 
     fn write_u64(&mut self, u: u64) {
