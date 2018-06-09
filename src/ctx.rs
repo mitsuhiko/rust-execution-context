@@ -51,8 +51,13 @@ impl ExecutionContextImpl {
         }
     }
 
+    /// Checks if the flow is currently active.
     fn has_active_flow(&self) -> bool {
-        self.flow_propagation == FlowPropagation::Active
+        match self.flow_propagation {
+            FlowPropagation::Active => true,
+            FlowPropagation::Suppressed => false,
+            FlowPropagation::Disabled => false,
+        }
     }
 }
 
@@ -74,7 +79,7 @@ pub struct ExecutionContext {
 
 impl fmt::Debug for ExecutionContext {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ExecutionContext").finish()
+        f.pad("ExecutionContext { .. }")
     }
 }
 
@@ -95,13 +100,15 @@ impl Default for ExecutionContext {
 /// The guard is internally reference counted.
 // the Rc is to make it non send
 #[derive(Clone)]
+#[must_use = "if this value is dropped the flow is restored. Assign to a temporary: let _guard = ..."]
 pub struct FlowGuard(Rc<FlowPropagation>);
 
 impl ExecutionContext {
     /// Captures the current execution context and returns it.
     ///
     /// If the current execution context is suppressed then this will instead
-    /// capture an empty default scope.  Capturing will always succeed.
+    /// capture an empty default scope (Same as if `ExecutionContext::default`
+    /// was called).  Capturing will always succeed.
     ///
     /// Capturing the execution context means that the flow of data will
     /// branch off here.  If a flow local is modified after the flow is
