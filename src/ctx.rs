@@ -19,6 +19,9 @@ lazy_static! {
 }
 
 thread_local! {
+    // we are using an unsafe cell here because current context is held
+    // in thread local storage only and as such there can never be
+    // references to it accessed from multiple places.
     static CURRENT_CONTEXT: UnsafeCell<Arc<ExecutionContextImpl>> =
         UnsafeCell::new(DEFAULT_ACTIVE_CONTEXT.clone());
 }
@@ -261,9 +264,9 @@ impl ExecutionContext {
     }
 
     /// Inserts a value into the locals.
-    pub(crate) fn set_local_value(key: TypeId, new_value: Arc<Box<Opaque>>) {
+    pub(crate) fn set_local_value(key: TypeId, value: Arc<Box<Opaque>>) {
         let new_locals =
-            CURRENT_CONTEXT.with(|ctx| unsafe { (*ctx.get()).locals.insert(key, new_value) });
+            CURRENT_CONTEXT.with(|ctx| unsafe { (*ctx.get()).locals.insert(key, value) });
         ExecutionContext::modify_context(|ctx| {
             ctx.locals = new_locals;
         });
