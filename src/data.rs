@@ -120,6 +120,16 @@ impl<T: Send + 'static> FlowLocal<T> {
         FlowBox(arc)
     }
 
+    /// Similar to `get` but invokes the closure with a reference to the value.
+    ///
+    /// This API exists for consistency with thread locals and also can be
+    /// implemented to give improved performance over the required arc clone
+    /// that `get` requires.  However currently no such performance improvement
+    /// is implemented.
+    pub fn with<F: FnOnce(&T) -> R, R>(&self, f: F) -> R {
+        f(&*self.get())
+    }
+
     /// Sets a new value for the flow-local.
     pub fn set(&self, value: T) {
         let key = (self.__key)();
